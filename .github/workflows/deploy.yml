@@ -31,20 +31,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # (Optional) Show OIDC token claims minted by GitHub so you can confirm 'sub' = repo:<org>/<repo>:ref:refs/heads/main
-      - name: Show OIDC token claims (debug only)
+      ###########################################################################
+      # 1) REQUEST & SAVE THE FULL GITHUB OIDC TOKEN (JWT) AS AN ARTIFACT
+      ###########################################################################
+      - name: Get FULL OIDC token and save to file
         shell: bash
         run: |
           set -e
+          # Request an OIDC token with the Azure AD Token Exchange audience
           RAW=$(curl -sSL "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" \
                  -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-          JWT=$(echo "$RAW" | jq -r '.value')
-          # Decode payload (handle base64url padding)
-          PAYLOAD=$(echo "$JWT" | cut -d '.' -f2 | tr '_-' '/+' \
-                    | awk '{ l=4-(length%4); if(l<4){printf "%s", $0; for(i=0;i<l;i++) printf "=" } else printf "%s", $0 }' \
-                    | base64 -d 2>/dev/null || true)
-          echo "$PAYLOAD" | jq .
+          # Extract the JWT (string) from the JSON
+          echo "$RAW" | jq -r '.value' > oidc-jwt.txt
+          echo "Saved OIDC JWT to oidc-jwt.txt"
+          # Also decode claims for convenience
+          JWT=$(cat oidc-jwt.txt)
+          HDR=$(echo "$JWT" | cut -d '.' -f1)
+          PAY=$(echo "$JWT" | cut -d '.' -f2)
+          # Base64url decode header & payload (best effort)
+          printf "%s" "$HDR" | tr '_-' '/+' | base64 -d 2>/dev/null > oidc-header.json || true
+          printf "%s" "$PAY" | tr '_-' '/+' | base64 -d 2>/dev/null > oidc-payload.json || true
+          echo "Decoded OIDC header → oidc-header.json"
+          echo "Decoded OIDC payload → oidc-payload.json"
 
+      - name: Upload OIDC token artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oidc-token
+          path: |
+            oidc-jwt.txt
+            oidc-header.json
+            oidc-payload.json
+          if-no-files-found: error
+          retention-days: 1   # keep extremely short
+
+      ###########################################################################
+      # 2) AZURE LOGIN VIA OIDC
+      ###########################################################################
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -52,7 +75,37 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Validate the template & parameters against the RG scope
+      ###########################################################################
+      # 3) REQUEST & SAVE THE FULL AZURE ACCESS TOKEN (ARM) AS ARTIFACTS
+      ###########################################################################
+      - name: Get FULL Azure ARM access token & metadata and save to files
+        shell: bash
+        run: |
+          set -e
+          # ARM access token (Bearer JWT)
+          az account get-access-token --query accessToken -o tsv > arm-token.txt
+          # Metadata (resource, expiresOn, tenant, etc.)
+          az account get-access-token -o json > arm-token-metadata.json
+          echo "Saved ARM token → arm-token.txt"
+          echo "Saved ARM metadata → arm-token-metadata.json"
+          # Optional: also get Microsoft Graph token if you need it
+          # az account get-access-token --resource https://graph.microsoft.com/ --query accessToken -o tsv > graph-token.txt
+          # echo "Saved Graph token → graph-token.txt"
+
+      - name: Upload ARM token artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-token
+          path: |
+            arm-token.txt
+            arm-token-metadata.json
+            # graph-token.txt
+          if-no-files-found: error
+          retention-days: 1   # keep extremely short
+
+      ###########################################################################
+      # 4) VALIDATE THE TEMPLATE AGAINST THE RG SCOPE
+      ###########################################################################
       - name: Validate template (group scope)
         uses: azure/cli@v1
         with:
