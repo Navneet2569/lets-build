@@ -5,11 +5,11 @@
     "location": {
       "value": "eastus"
     },
-    "storageAccountName": {
-      "value": "prodstorage${{ github.run_number }}"
-    },
     "skuName": {
       "value": "Standard_LRS"
+    },
+    "saPrefix": {
+      "value": "prodstorage"
     }
   }
 }
