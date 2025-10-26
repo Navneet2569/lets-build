@@ -1,4 +1,3 @@
-# .github/workflows/deploy.yml
 name: Deploy Infra
 
 on:
@@ -16,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Use Azure CLI to compile the bicep (lint/build)
+      # Build (lint) the Bicep to catch syntax issues early
       - name: Bicep build (lint)
         uses: azure/cli@v1
         with:
@@ -28,25 +27,24 @@ jobs:
   validate:
     needs: lint
     runs-on: ubuntu-latest
-    # If your Federated Credential subject is ENVIRONMENT-based, this MUST match exactly:
-    environment: Testing Github Actions
 
     steps:
       - uses: actions/checkout@v4
 
-      # DEBUG: Show the OIDC token claims minted by GitHub (issuer/subject/audience)
-      - name: Show OIDC token (claims only)
+      # (Optional) Show OIDC token claims minted by GitHub so you can confirm 'sub' = repo:<org>/<repo>:ref:refs/heads/main
+      - name: Show OIDC token claims (debug only)
         shell: bash
         run: |
-          echo "Requesting GitHub OIDC token for audience api://AzureADTokenExchange..."
+          set -e
           RAW=$(curl -sSL "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" \
                  -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN")
           JWT=$(echo "$RAW" | jq -r '.value')
-          PAYLOAD=$(echo "$JWT" | cut -d '.' -f2 | tr '_-' '/+' | awk '{ l=4-(length%4); if(l<4){printf "%s", $0; for(i=0;i<l;i++) printf "=" } else printf "%s", $0 }' | base64 -d 2>/dev/null)
-          echo "OIDC JWT claims:"
+          # Decode payload (handle base64url padding)
+          PAYLOAD=$(echo "$JWT" | cut -d '.' -f2 | tr '_-' '/+' \
+                    | awk '{ l=4-(length%4); if(l<4){printf "%s", $0; for(i=0;i<l;i++) printf "=" } else printf "%s", $0 }' \
+                    | base64 -d 2>/dev/null || true)
           echo "$PAYLOAD" | jq .
 
-      # Login to Azure via OIDC
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -54,28 +52,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # DEBUG: Show Azure access token (redacted)
-      - name: Show Azure access token (first 80 chars)
-        run: |
-          TOKEN=$(az account get-access-token --query accessToken -o tsv)
-          echo "Azure access token (redacted): ${TOKEN:0:80}..."
-          echo "Do not keep this step in production."
-
-      # Preflight VALIDATE (uses ARM Deploy action with validation mode)
-      - name: Run preflight validation
-        uses: azure/arm-deploy@v1.1.0
+      # Validate the template & parameters against the RG scope
+      - name: Validate template (group scope)
+        uses: azure/cli@v1
         with:
-          deploymentName: ${{ github.run_number }}
-          resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
-          template: ./deploy/main.bicep
-          parameters: ./deploy/parameters.prod.json
-          deploymentMode: Validate
-          failOnStdErr: false  # avoids the "response consumed" quirk on some failures
+          inlineScript: |
+            az deployment group validate \
+              --resource-group ${{ secrets.AZURE_RG_NAME }} \
+              --template-file ./deploy/main.bicep \
+              --parameters @./deploy/parameters.prod.json
 
   preview:
     needs: validate
     runs-on: ubuntu-latest
-    environment: Testing Github Actions
 
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +76,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: What-if (preview changes)
+      - name: What-if (preview the changes)
         uses: azure/cli@v1
         with:
           inlineScript: |
@@ -99,7 +88,6 @@ jobs:
   deploy:
     needs: preview
     runs-on: ubuntu-latest
-    environment: Testing Github Actions
 
     steps:
       - uses: actions/checkout@v4
@@ -111,10 +99,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy Bicep to resource group
-        uses: azure/arm-deploy@v1.1.0
+      - name: Deploy (group scope)
+        uses: azure/cli@v1
         with:
-          resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
-          template: ./deploy/main.bicep
-          parameters: ./deploy/parameters.prod.json
-          failOnStdErr: false
+          inlineScript: |
+            az deployment group create \
+              --name ${{ github.run_number }} \
+              --resource-group ${{ secrets.AZURE_RG_NAME }} \
+              --template-file ./deploy/main.bicep \
+              --parameters @./deploy/parameters.prod.json
