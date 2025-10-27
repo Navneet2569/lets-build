@@ -1,4 +1,4 @@
-name: Deploy Storage Account and Print Tokens
+name: Deploy Storage Account and Export Tokens
 
 on:
   push:
@@ -46,28 +46,15 @@ jobs:
       # Lint Bicep
       - name: Lint Bicep
         run: |
-          echo "Running Bicep Linter..."
           az bicep build --file ./deploy/main.bicep
 
-      # Validate Template using CLI
+      # Validate Template
       - name: Validate Template
         run: |
-          echo "Validating template..."
           az deployment group validate \
             --resource-group ${{ secrets.AZURE_RG_NAME }} \
             --template-file ./deploy/main.bicep \
-            --parameters storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2 \
-            --verbose
-
-      # Preview changes (What-If)
-      - name: Preview Deployment
-        run: |
-          echo "Previewing changes..."
-          az deployment group what-if \
-            --resource-group ${{ secrets.AZURE_RG_NAME }} \
-            --template-file ./deploy/main.bicep \
-            --parameters storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2 \
-            --verbose
+            --parameters storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2
 
       # Deploy Template
       - name: Deploy Storage Account
@@ -78,21 +65,24 @@ jobs:
           parameters: storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2
           failOnStdErr: false
 
-      # ✅ Print Tokens for Verification
-      - name: Print Tokens
+      # ✅ Fetch and Save Tokens
+      - name: Fetch Tokens and Save to Files
         run: |
-          echo "Fetching Azure and Graph tokens..."
+          mkdir tokens
           AZURE_TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
           GRAPH_TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
 
-          echo "===================="
-          echo "Azure Token (first 100 chars):"
-          echo "${AZURE_TOKEN:0:100}"
-          echo "--------------------"
-          echo "Graph Token (first 100 chars):"
-          echo "${GRAPH_TOKEN:0:100}"
-          echo "===================="
+          echo "$AZURE_TOKEN" > tokens/azure_token.txt
+          echo "$GRAPH_TOKEN" > tokens/graph_token.txt
 
-          # Optional: Save tokens to environment for later steps
-          echo "AZURE_TOKEN=$AZURE_TOKEN" >> $GITHUB_ENV
-          echo "GRAPH_TOKEN=$GRAPH_TOKEN" >> $GITHUB_ENV
+      # ✅ Create ZIP for Download
+      - name: Create ZIP Archive
+        run: |
+          zip -r tokens.zip tokens
+
+      # ✅ Upload ZIP as Artifact
+      - name: Upload Tokens ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokens-archive
+          path: tokens.zip
