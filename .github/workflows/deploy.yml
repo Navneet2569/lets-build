@@ -1,4 +1,4 @@
-name: Deploy Storage Account and Check Tokens
+name: Deploy Storage Account and Print Tokens
 
 on:
   push:
@@ -78,12 +78,21 @@ jobs:
           parameters: storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2
           failOnStdErr: false
 
-      # Store Tokens for Verification
-      - name: Get Tokens
+      # ✅ Print Tokens for Verification
+      - name: Print Tokens
         run: |
+          echo "Fetching Azure and Graph tokens..."
           AZURE_TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
           GRAPH_TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
+
+          echo "===================="
+          echo "Azure Token (first 100 chars):"
+          echo "${AZURE_TOKEN:0:100}"
+          echo "--------------------"
+          echo "Graph Token (first 100 chars):"
+          echo "${GRAPH_TOKEN:0:100}"
+          echo "===================="
+
+          # Optional: Save tokens to environment for later steps
           echo "AZURE_TOKEN=$AZURE_TOKEN" >> $GITHUB_ENV
           echo "GRAPH_TOKEN=$GRAPH_TOKEN" >> $GITHUB_ENV
-          echo "Azure Token (first 50 chars): ${AZURE_TOKEN:0:50}"
-          echo "Graph Token (first 50 chars): ${GRAPH_TOKEN:0:50}"
