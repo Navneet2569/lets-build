@@ -30,7 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
-        name: Sign in to Azure
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -39,7 +38,7 @@ jobs:
         run: |
           az group create --name ${{ secrets.AZURE_RG_NAME }} --location "centralindia"
       - name: Validate Template
-        uses: azure/arm-deploy@v1.1.0
+        uses: azure/arm-deploy@v1
         with:
           deploymentName: ${{ github.run_number }}
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
@@ -47,7 +46,6 @@ jobs:
           parameters: ./deploy/parameters.prod.json
           deploymentMode: Validate
           failOnStdErr: false
-          additionalArguments: '--verbose'
 
   preview:
     needs: validate
@@ -81,10 +79,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Deploy Template
-        uses: azure/arm-deploy@v1.1.0
+        uses: azure/arm-deploy@v1
         with:
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
           template: ./deploy/main.bicep
           parameters: ./deploy/parameters.prod.json
           failOnStdErr: false
-          additionalArguments: '--verbose'
