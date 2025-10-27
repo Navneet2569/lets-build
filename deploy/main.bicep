@@ -1,7 +1,7 @@
 param storageAccountName string
-param location string = 'centralindia'
-param skuName string = 'Standard_LRS'
-param kind string = 'StorageV2'
+param location string
+param skuName string
+param kind string
 
 resource sa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName

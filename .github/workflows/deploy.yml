@@ -36,20 +36,27 @@ jobs:
         run: |
           az group create --name ${{ secrets.AZURE_RG_NAME }} --location "centralindia"
 
+      # Generate a valid Storage Account name
+      - name: Generate Storage Account Name
+        run: |
+          RAND=$(date +%s | sha256sum | head -c 8)
+          echo "STORAGE_NAME=st${RAND}" >> $GITHUB_ENV
+          echo "Generated Storage Account Name: st${RAND}"
+
       # Lint Bicep
       - name: Lint Bicep
         run: |
           echo "Running Bicep Linter..."
           az bicep build --file ./deploy/main.bicep
 
-      # Validate Template using CLI (avoids arm-deploy bug)
+      # Validate Template using CLI
       - name: Validate Template
         run: |
           echo "Validating template..."
           az deployment group validate \
             --resource-group ${{ secrets.AZURE_RG_NAME }} \
             --template-file ./deploy/main.bicep \
-            --parameters @./deploy/parameters.prod.json \
+            --parameters storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2 \
             --verbose
 
       # Preview changes (What-If)
@@ -59,7 +66,7 @@ jobs:
           az deployment group what-if \
             --resource-group ${{ secrets.AZURE_RG_NAME }} \
             --template-file ./deploy/main.bicep \
-            --parameters @./deploy/parameters.prod.json \
+            --parameters storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2 \
             --verbose
 
       # Deploy Template
@@ -68,7 +75,7 @@ jobs:
         with:
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
           template: ./deploy/main.bicep
-          parameters: ./deploy/parameters.prod.json
+          parameters: storageAccountName=${{ env.STORAGE_NAME }} location=centralindia skuName=Standard_LRS kind=StorageV2
           failOnStdErr: false
 
       # Store Tokens for Verification
