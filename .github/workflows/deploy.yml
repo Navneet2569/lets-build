@@ -1,4 +1,4 @@
-name: Deploy Infra
+name: Deploy Storage Account and Check Tokens
 
 on:
   push:
@@ -11,77 +11,72 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  deploy:
     runs-on: ubuntu-latest
     steps:
+      # Checkout code
       - uses: actions/checkout@v4
+
+      # Install Azure CLI & Bicep
       - name: Install Azure CLI & Bicep
         run: |
           curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
           az bicep install
-      - name: Run Bicep Linter
+
+      # Login to Azure using Managed Identity via OIDC
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Ensure Resource Group Exists
+      - name: Ensure Resource Group Exists
+        run: |
+          az group create --name ${{ secrets.AZURE_RG_NAME }} --location "centralindia"
+
+      # Lint Bicep
+      - name: Lint Bicep
         run: |
           echo "Running Bicep Linter..."
           az bicep build --file ./deploy/main.bicep
 
-  validate:
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Ensure Resource Group Exists
-        run: |
-          az group create --name ${{ secrets.AZURE_RG_NAME }} --location "centralindia"
+      # Validate Template using CLI (avoids arm-deploy bug)
       - name: Validate Template
-        uses: azure/arm-deploy@v1
-        with:
-          deploymentName: ${{ github.run_number }}
-          resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
-          template: ./deploy/main.bicep
-          parameters: ./deploy/parameters.prod.json
-          deploymentMode: Validate
-          failOnStdErr: false
+        run: |
+          echo "Validating template..."
+          az deployment group validate \
+            --resource-group ${{ secrets.AZURE_RG_NAME }} \
+            --template-file ./deploy/main.bicep \
+            --parameters @./deploy/parameters.prod.json \
+            --verbose
 
-  preview:
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - uses: Azure/cli@v1
-        name: Run What-If Preview
-        with:
-          inlineScript: |
-            az deployment group what-if \
-              --resource-group ${{ secrets.AZURE_RG_NAME }} \
-              --template-file ./deploy/main.bicep \
-              --parameters ./deploy/parameters.prod.json \
-              --verbose
+      # Preview changes (What-If)
+      - name: Preview Deployment
+        run: |
+          echo "Previewing changes..."
+          az deployment group what-if \
+            --resource-group ${{ secrets.AZURE_RG_NAME }} \
+            --template-file ./deploy/main.bicep \
+            --parameters @./deploy/parameters.prod.json \
+            --verbose
 
-  deploy:
-    needs: preview
-    runs-on: ubuntu-latest
-    environment: Production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Deploy Template
+      # Deploy Template
+      - name: Deploy Storage Account
         uses: azure/arm-deploy@v1
         with:
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
           template: ./deploy/main.bicep
           parameters: ./deploy/parameters.prod.json
           failOnStdErr: false
+
+      # Store Tokens for Verification
+      - name: Get Tokens
+        run: |
+          AZURE_TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
+          GRAPH_TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
+          echo "AZURE_TOKEN=$AZURE_TOKEN" >> $GITHUB_ENV
+          echo "GRAPH_TOKEN=$GRAPH_TOKEN" >> $GITHUB_ENV
+          echo "Azure Token (first 50 chars): ${AZURE_TOKEN:0:50}"
+          echo "Graph Token (first 50 chars): ${GRAPH_TOKEN:0:50}"
