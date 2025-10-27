@@ -1,4 +1,4 @@
-name: Deploy Storage and Manage Users
+name: Lint, Validate, Preview, and Deploy
 on:
   push:
     branches: [ "main" ]
@@ -13,17 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) Get GitHub OIDC token and store it
-      - name: Get GitHub OIDC Token
-        id: oidc
-        run: |
-          echo "GITHUB_OIDC_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >> $GITHUB_ENV
-          echo "OIDC_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL}" >> $GITHUB_ENV
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ github.token }}
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ github.api_url }}/actions/oidc/token
-
-      # 2) Login using Managed Identity via OIDC
+      # 1) Azure Login using Managed Identity via OIDC
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -31,23 +21,43 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # 3) Store Azure token
-      - name: Get Azure Token
+      # 2) Lint Bicep template
+      - name: Lint Bicep
         run: |
-          AZURE_TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
-          echo "AZURE_TOKEN=$AZURE_TOKEN" >> $GITHUB_ENV
+          echo "Running Bicep Linter..."
+          az bicep build --file storage.bicep
 
-      # 4) Deploy Storage Account using Bicep
-      - name: Deploy Storage Account
+      # 3) Validate template
+      - name: Validate Template
         run: |
           RG_NAME="rg-central-india"
-          az group create --name "$RG_NAME" --location "centralindia"
+          echo "Validating deployment..."
+          az deployment group validate \
+            --resource-group "$RG_NAME" \
+            --template-file storage.bicep \
+            --parameters @parameters.prod.json
+
+      # 4) Preview changes (What-If)
+      - name: Preview Deployment (What-If)
+        run: |
+          RG_NAME="rg-central-india"
+          echo "Previewing changes..."
+          az deployment group what-if \
+            --resource-group "$RG_NAME" \
+            --template-file storage.bicep \
+            --parameters @parameters.prod.json
+
+      # 5) Deploy template
+      - name: Deploy Template
+        run: |
+          RG_NAME="rg-central-india"
+          echo "Deploying resources..."
           az deployment group create \
             --resource-group "$RG_NAME" \
             --template-file storage.bicep \
             --parameters @parameters.prod.json
 
-      # 5) Create a user via Microsoft Graph
+      # 6) Create a user via Microsoft Graph
       - name: Create User
         run: |
           GRAPH_TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
