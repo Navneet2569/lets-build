@@ -21,7 +21,6 @@ jobs:
           az bicep install
       - name: Run Bicep Linter
         run: |
-          set -e
           echo "Running Bicep Linter..."
           az bicep build --file ./deploy/main.bicep
 
@@ -39,14 +38,16 @@ jobs:
       - name: Ensure Resource Group Exists
         run: |
           az group create --name ${{ secrets.AZURE_RG_NAME }} --location "centralindia"
-      - uses: azure/arm-deploy@v1
-        name: Preflight Validation
+      - name: Validate Template
+        uses: azure/arm-deploy@v1.1.0
         with:
           deploymentName: ${{ github.run_number }}
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
           template: ./deploy/main.bicep
           parameters: ./deploy/parameters.prod.json
           deploymentMode: Validate
+          failOnStdErr: false
+          additionalArguments: '--verbose'
 
   preview:
     needs: validate
@@ -54,7 +55,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
-        name: Sign in to Azure
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -63,7 +63,6 @@ jobs:
         name: Run What-If Preview
         with:
           inlineScript: |
-            set -e
             az deployment group what-if \
               --resource-group ${{ secrets.AZURE_RG_NAME }} \
               --template-file ./deploy/main.bicep \
@@ -81,16 +80,11 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Deploy Bicep File
-        uses: azure/arm-deploy@v1
+      - name: Deploy Template
+        uses: azure/arm-deploy@v1.1.0
         with:
           resourceGroupName: ${{ secrets.AZURE_RG_NAME }}
           template: ./deploy/main.bicep
           parameters: ./deploy/parameters.prod.json
           failOnStdErr: false
-      - name: Store Tokens
-        run: |
-          AZURE_TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
-          GRAPH_TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
-          echo "AZURE_TOKEN=$AZURE_TOKEN" >> $GITHUB_ENV
-          echo "GRAPH_TOKEN=$GRAPH_TOKEN" >> $GITHUB_ENV
+          additionalArguments: '--verbose'
